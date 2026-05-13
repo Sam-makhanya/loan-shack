@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>VuraFlow | Fast & Secure Loans</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+
+<link rel="stylesheet"
+href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+
+<script type="module">
+
+/* =========================================
+   FIREBASE IMPORTS
+========================================= */
+
+import { initializeApp }
+from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+
+import {
+getAuth,
+createUserWithEmailAndPassword,
+signInWithEmailAndPassword,
+onAuthStateChanged,
+signOut
+}
+from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+
+import {
+getFirestore,
+addDoc,
+collection,
+query,
+where,
+getDocs
+}
+from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+import {
+getStorage,
+ref,
+uploadBytes,
+getDownloadURL
+}
+from "https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js";
+
+/* =========================================
+   FIREBASE CONFIG
+========================================= */
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCV4nx2NddXGy930xoAXa4u7tON_CYrM8Q",
+  authDomain: "loan-shack-21e5e.firebaseapp.com",
+  projectId: "loan-shack-21e5e",
+
+  /* IMPORTANT */
+  storageBucket: "loan-shack-storage-12345.appspot.com",
+
+  messagingSenderId: "937892872126",
+  appId: "1:937892872126:web:78436004dacd60fc94c3ef",
+  measurementId: "G-1798P1BH3S"
+};
+
+/* =========================================
+   INITIALIZE FIREBASE
+========================================= */
+
+const app = initializeApp(firebaseConfig);
+
+const auth = getAuth(app);
+
+const db = getFirestore(app);
+
+/* FORCE CUSTOM BUCKET */
+const storage = getStorage(
+app,
+"gs://loan-shack-storage-12345.appspot.com"
+);
+
+/* =========================================
+   GLOBAL VARIABLES
+========================================= */
+
+let requestedAmount = 0;
+let totalRepayment = 0;
+
+/* =========================================
+   PAGE NAVIGATION
+========================================= */
+
+window.showPage = (pageId) => {
+
+document.querySelectorAll(".page").forEach(page => {
+page.classList.add("hidden");
+});
+
+document.getElementById(pageId).classList.remove("hidden");
+
+window.scrollTo(0,0);
+
+};
+
+/* =========================================
+   AUTH STATE
+========================================= */
+
+onAuthStateChanged(auth, async(user)=>{
+
+const navBtn =
+document.getElementById("navAuthBtn");
+
+if(user){
+
+navBtn.innerText = "Logout";
+
+navBtn.onclick = async()=>{
+
+await signOut(auth);
+
+showPage("home");
+
+};
+
+loadClientApplications();
+
+}else{
+
+navBtn.innerText = "Login / Register";
+
+navBtn.onclick = ()=>{
+showPage("authPage");
+};
+
+}
+
+});
+
+/* =========================================
+   START APPLICATION
+========================================= */
+
+window.startApplicationFlow = ()=>{
+
+if(auth.currentUser){
+
+showPage("apply");
+
+}else{
+
+showPage("authPage");
+
+}
+
+};
+
+/* =========================================
+   LOGIN / SIGNUP
+========================================= */
+
+window.handleAuth = async(e,type)=>{
+
+e.preventDefault();
+
+const email =
+document.getElementById("authEmail").value;
+
+const password =
+document.getElementById("authPass").value;
+
+const btn = e.target;
+
+try{
+
+btn.disabled = true;
+
+btn.innerText = "Please wait...";
+
+if(type === "signup"){
+
+await createUserWithEmailAndPassword(
+auth,
+email,
+password
+);
+
+}else{
+
+await signInWithEmailAndPassword(
+auth,
+email,
+password
+);
+
+}
+
+showPage("home");
+
+}catch(error){
+
+alert(error.message);
+
+}
+
+btn.disabled = false;
+
+btn.innerText =
+type === "signup"
+? "Create Account"
+: "Login";
+
+};
+
+/* =========================================
+   LOAN CALCULATOR
+========================================= */
+
+window.calculateEstimate = ()=>{
+
+const amount = parseFloat(
+document.getElementById("calcAmount").value
+) || 0;
+
+const interest = amount * 0.50;
+
+const total = amount + interest;
+
+requestedAmount = amount;
+
+totalRepayment = total;
+
+document.getElementById(
+"interestDisplay"
+).innerText = `R ${interest.toFixed(2)}`;
+
+document.getElementById(
+"totalRepayDisplay"
+).innerText = `R ${total.toFixed(2)}`;
+
+document.getElementById(
+"summaryTotal"
+).innerText = total.toFixed(2);
+
+const applyBtn =
+document.getElementById("proceedToApplyBtn");
+
+applyBtn.disabled = amount < 500;
+
+if(amount < 500){
+
+applyBtn.classList.add("opacity-50");
+
+}else{
+
+applyBtn.classList.remove("opacity-50");
+
+}
+
+};
+
+/* =========================================
+   SUBMIT APPLICATION
+========================================= */
+
+window.handleApplication = async(e)=>{
+
+e.preventDefault();
+
+const btn =
+document.getElementById("submitBtn");
+
+btn.disabled = true;
+
+btn.innerText = "Submitting...";
+
+try{
+
+const user = auth.currentUser;
+
+if(!user){
+
+alert("Please login first");
+
+return;
+
+}
+
+/* =========================================
+   SAVE TO FIRESTORE FIRST
+========================================= */
+
+const applicationData = {
+
+userId:user.uid,
+
+fullName:
+document.getElementById("fullname").value,
+
+idNumber:
+document.getElementById("idnumber").value,
+
+phone:
+document.getElementById("phone").value,
+
+email:
+document.getElementById("email").value,
+
+employment:
+document.getElementById("employment").value,
+
+salary:Number(
+document.getElementById("salary").value
+),
+
+principal:requestedAmount,
+
+interest:requestedAmount * 0.50,
+
+totalOwed:totalRepayment,
+
+status:"Pending",
+
+paymentStatus:"Awaiting Approval",
+
+createdAt:new Date().toISOString()
+
+};
+
+await addDoc(
+collection(db,"loan_submissions"),
+applicationData
+);
+
+/* =========================================
+   SUCCESS IMMEDIATELY
+========================================= */
+
+alert("Application Submitted Successfully!");
+
+showPage("clientStatus");
+
+loadClientApplications();
+
+/* =========================================
+   UPLOAD DOCUMENTS IN BACKGROUND
+========================================= */
+
+const files = {
+
+idCopy:
+document.getElementById("idcopy").files[0],
+
+payslip:
+document.getElementById("payslip").files[0],
+
+bankStatement:
+document.getElementById("bankstatement").files[0]
+
+};
+
+Object.entries(files).forEach(([key,file])=>{
+
+const storageRef = ref(
+storage,
+`loan_documents/${user.uid}/${Date.now()}_${key}`
+);
+
+uploadBytes(storageRef,file)
+
+.then(snapshot => {
+
+return getDownloadURL(snapshot.ref);
+
+})
+
+.then(url => {
+
+console.log(
+key + " uploaded successfully:",
+url
+);
+
+})
+
+.catch(error => {
+
+console.log(error);
+
+});
+
+});
+
+/* RESET FORM */
+
+document.getElementById("loanForm").reset();
+
+}catch(error){
+
+alert(error.message);
+
+}
+
+btn.disabled = false;
+
+btn.innerText = "Submit Application";
+
+};
+
+/* =========================================
+   LOAD CLIENT APPLICATIONS
+========================================= */
+
+async function loadClientApplications(){
+
+const user = auth.currentUser;
+
+if(!user) return;
+
+const q = query(
+collection(db,"loan_submissions"),
+where("userId","==",user.uid)
+);
+
+const snapshot = await getDocs(q);
+
+const container =
+document.getElementById("clientApplications");
+
+if(!container) return;
+
+container.innerHTML = "";
+
+if(snapshot.empty){
+
+container.innerHTML = `
+
+<div class="bg-white p-10 rounded-3xl shadow text-center">
+
+<h2 class="text-3xl font-black mb-3">
+No Applications Yet
+</h2>
+
+<p class="text-gray-500">
+Your loan applications will appear here.
+</p>
+
+</div>
+
+`;
+
+return;
+
+}
+
+snapshot.forEach((doc)=>{
+
+const data = doc.data();
+
+let statusColor =
+"bg-yellow-100 text-yellow-700";
+
+if(data.status === "Approved"){
+
+statusColor =
+"bg-green-100 text-green-700";
+
+}
+
+if(data.status === "Rejected"){
+
+statusColor =
+"bg-red-100 text-red-700";
+
+}
+
+container.innerHTML += `
+
+<div class="bg-white p-8 rounded-3xl shadow border">
+
+<div class="flex justify-between items-center">
+
+<div>
+
+<h2 class="text-4xl font-black">
+R ${data.principal}
+</h2>
+
+<p class="text-gray-500 mt-2">
+Total Repayment:
+<strong>R ${data.totalOwed}</strong>
+</p>
+
+</div>
+
+<div class="${statusColor} px-5 py-2 rounded-full font-bold">
+${data.status}
+</div>
+
+</div>
+
+<div class="grid md:grid-cols-2 gap-6 mt-8">
+
+<div class="bg-slate-50 p-5 rounded-2xl">
+
+<p class="text-sm text-gray-400">
+Interest
+</p>
+
+<h3 class="text-2xl font-bold">
+R ${data.interest}
+</h3>
+
+</div>
+
+<div class="bg-slate-50 p-5 rounded-2xl">
+
+<p class="text-sm text-gray-400">
+Payment Status
+</p>
+
+<h3 class="text-xl font-bold">
+${data.paymentStatus}
+</h3>
+
+</div>
+
+</div>
+
+<div class="mt-6 text-sm text-gray-400">
+
+Submitted:
+${new Date(data.createdAt).toLocaleString()}
+
+</div>
+
+</div>
+
+`;
+
+});
+
+}
+
+</script>
+
+</head>
+
+<body class="bg-slate-50 text-slate-900 font-sans">
+
+<!-- =========================================
+     NAVBAR
+========================================= -->
+
+<nav class="bg-white border-b py-4 px-8 flex justify-between items-center sticky top-0 z-50">
+
+<div
+class="flex items-center gap-3 cursor-pointer"
+onclick="showPage('home')">
+
+<div class="bg-indigo-600 p-3 rounded-xl">
+<i class="fas fa-hand-holding-usd text-white"></i>
+</div>
+
+<h1 class="text-2xl font-black text-indigo-900">
+VuraFlow
+</h1>
+
+</div>
+
+<div class="flex items-center gap-4">
+
+<button
+onclick="showPage('clientStatus')"
+class="font-bold text-indigo-700">
+
+My Applications
+
+</button>
+
+<button
+id="navAuthBtn"
+class="bg-slate-900 text-white px-6 py-2 rounded-full text-xs font-bold uppercase">
+</button>
+
+</div>
+
+</nav>
+
+<!-- =========================================
+     HOME PAGE
+========================================= -->
+
+<section id="home" class="page container mx-auto px-4 py-14">
+
+<div class="max-w-6xl mx-auto grid md:grid-cols-2 gap-14 items-center">
+
+<div>
+
+<h1 class="text-6xl font-black leading-tight">
+
+Fast Cash.<br>
+
+<span class="text-indigo-600">
+No Stress.
+</span>
+
+</h1>
+
+<p class="mt-6 text-gray-500 text-xl">
+
+Quick online loans with fast approvals and secure processing.
+
+</p>
+
+</div>
+
+<div class="bg-white p-8 rounded-3xl shadow-2xl border">
+
+<p class="text-xs uppercase text-gray-400 font-bold text-center mb-5">
+
+Loan Estimator
+
+</p>
+
+<div class="space-y-6">
+
+<input
+type="number"
+id="calcAmount"
+oninput="calculateEstimate()"
+placeholder="Enter Amount (R)"
+class="w-full bg-gray-50 border p-5 rounded-2xl text-3xl font-black">
+
+<div class="grid grid-cols-2 gap-4">
+
+<div class="bg-gray-50 p-5 rounded-2xl text-center">
+
+<p class="text-xs text-gray-400">
+Interest (50%)
+</p>
+
+<h3 id="interestDisplay" class="text-2xl font-bold">
+R 0.00
+</h3>
+
+</div>
+
+<div class="bg-indigo-50 p-5 rounded-2xl text-center">
+
+<p class="text-xs text-indigo-500">
+Total Repayment
+</p>
+
+<h3 id="totalRepayDisplay"
+class="text-2xl font-black text-indigo-900">
+
+R 0.00
+
+</h3>
+
+</div>
+
+</div>
+
+<button
+id="proceedToApplyBtn"
+onclick="startApplicationFlow()"
+disabled
+class="w-full bg-indigo-600 text-white py-5 rounded-2xl font-black opacity-50">
+
+Apply Now
+
+</button>
+
+</div>
+
+</div>
+
+</div>
+
+</section>
+
+<!-- =========================================
+     AUTH PAGE
+========================================= -->
+
+<section id="authPage" class="page hidden py-20">
+
+<div class="max-w-md mx-auto bg-white p-10 rounded-3xl shadow-xl border">
+
+<h2 class="text-4xl font-black text-center mb-10">
+
+Login / Register
+
+</h2>
+
+<div class="space-y-5">
+
+<input
+type="email"
+id="authEmail"
+placeholder="Email Address"
+class="w-full border p-4 rounded-xl">
+
+<input
+type="password"
+id="authPass"
+placeholder="Password"
+class="w-full border p-4 rounded-xl">
+
+<button
+onclick="handleAuth(event,'login')"
+class="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold">
+
+Login
+
+</button>
+
+<button
+onclick="handleAuth(event,'signup')"
+class="w-full border-2 border-indigo-600 text-indigo-600 py-4 rounded-xl font-bold">
+
+Create Account
+
+</button>
+
+</div>
+
+</div>
+
+</section>
+
+<!-- =========================================
+     APPLY PAGE
+========================================= -->
+
+<section id="apply" class="page hidden py-12">
+
+<div class="max-w-3xl mx-auto bg-white rounded-3xl shadow-xl border overflow-hidden">
+
+<div class="bg-indigo-900 p-7 text-white text-center">
+
+<h2 class="text-2xl font-bold">
+Loan Application
+</h2>
+
+<p class="text-indigo-300 mt-2">
+Repayment Amount:
+R <span id="summaryTotal">0.00</span>
+</p>
+
+</div>
+
+<form
+id="loanForm"
+onsubmit="handleApplication(event)"
+class="p-10 space-y-5">
+
+<input
+type="text"
+id="fullname"
+placeholder="Full Name"
+required
+class="w-full border p-4 rounded-xl">
+
+<input
+type="text"
+id="idnumber"
+placeholder="ID Number"
+required
+class="w-full border p-4 rounded-xl">
+
+<input
+type="email"
+id="email"
+placeholder="Email Address"
+required
+class="w-full border p-4 rounded-xl">
+
+<input
+type="text"
+id="phone"
+placeholder="Phone Number"
+required
+class="w-full border p-4 rounded-xl">
+
+<div class="grid md:grid-cols-2 gap-4">
+
+<select
+id="employment"
+required
+class="w-full border p-4 rounded-xl">
+
+<option value="">
+Employment Type
+</option>
+
+<option>
+Permanent
+</option>
+
+<option>
+Contract
+</option>
+
+</select>
+
+<input
+type="number"
+id="salary"
+placeholder="Monthly Salary"
+required
+class="w-full border p-4 rounded-xl">
+
+</div>
+
+<div class="border-t pt-5">
+
+<p class="text-xs uppercase text-gray-400 font-bold mb-4">
+
+Required Documents
+
+</p>
+
+<div class="grid md:grid-cols-3 gap-4">
+
+<div>
+<label>ID Copy</label>
+<input type="file" id="idcopy" required>
+</div>
+
+<div>
+<label>Payslip</label>
+<input type="file" id="payslip" required>
+</div>
+
+<div>
+<label>Bank Statement</label>
+<input type="file" id="bankstatement" required>
+</div>
+
+</div>
+
+</div>
+
+<button
+type="submit"
+id="submitBtn"
+class="w-full bg-indigo-600 text-white py-5 rounded-2xl font-black">
+
+Submit Application
+
+</button>
+
+</form>
+
+</div>
+
+</section>
+
+<!-- =========================================
+     CLIENT STATUS PAGE
+========================================= -->
+
+<section id="clientStatus"
+class="page hidden py-14">
+
+<div class="max-w-5xl mx-auto px-4">
+
+<h1 class="text-5xl font-black mb-10">
+My Applications
+</h1>
+
+<div id="clientApplications" class="space-y-6"></div>
+
+</div>
+
+</section>
+
+</body>
+</html>
